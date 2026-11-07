@@ -927,6 +927,7 @@ function TabRiwayatTersedia({ histories }) {
 // ── TAB: Monitoring Ketersediaan & Kalender Penyewaan ──
 function TabMonitoringKetersediaan({ items = [], onRefresh }) {
   const [selectedSlug, setSelectedSlug] = useState('');
+  const [selectedUkuran, setSelectedUkuran] = useState('all');
   const now = new Date();
   const [targetYear, setTargetYear] = useState(() => now.getFullYear());
   const [targetMonth, setTargetMonth] = useState(() => now.getMonth() + 1);
@@ -947,13 +948,13 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
 
   const activeKebaya = items.find(k => k.slug === selectedSlug) || items[0] || null;
 
-  const fetchCalendar = useCallback(async (slug, y, m) => {
+  const fetchCalendar = useCallback(async (slug, y, m, uk = 'all') => {
     if (!slug) return;
     setLoadingCal(true);
     try {
-      const res = await api.get(`/kebaya/${slug}/calendar`, {
-        params: { year: y, month: m },
-      });
+      const params = { year: y, month: m };
+      if (uk && uk !== 'all') params.ukuran = uk;
+      const res = await api.get(`/kebaya/${slug}/calendar`, { params });
       setCalData(res.data);
     } catch {
       setCalData(null);
@@ -964,10 +965,10 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
 
   useEffect(() => {
     if (selectedSlug) {
-      fetchCalendar(selectedSlug, targetYear, targetMonth);
+      fetchCalendar(selectedSlug, targetYear, targetMonth, selectedUkuran);
       setSelectedDay(null);
     }
-  }, [selectedSlug, targetYear, targetMonth, fetchCalendar]);
+  }, [selectedSlug, targetYear, targetMonth, selectedUkuran, fetchCalendar]);
 
   const handlePrevMonth = () => {
     if (targetMonth === 1) {
@@ -1000,10 +1001,12 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
   const daysMap = calData?.days || {};
   const bookedRanges = calData?.bookedRanges || [];
 
-  // Filter rentals for selected date
-  const filteredRentals = selectedDay
-    ? bookedRanges.filter(r => r.start <= selectedDay && r.end >= selectedDay)
-    : bookedRanges;
+  // Filter rentals for selected date & size
+  const filteredRentals = bookedRanges.filter(r => {
+    const matchDay = selectedDay ? (r.start <= selectedDay && r.end >= selectedDay) : true;
+    const matchUkuran = selectedUkuran && selectedUkuran !== 'all' ? (r.ukuran === selectedUkuran) : true;
+    return matchDay && matchUkuran;
+  });
 
   const filteredItems = items.filter(k =>
     (k.nama || '').toLowerCase().includes(searchKebaya.toLowerCase())
@@ -1114,20 +1117,24 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
                     <p className={`text-[11px] mt-0.5 ${isSelected ? 'text-stone-300' : 'text-stone-500'}`}>
                       Total: {k.stok ?? 1} unit • Rp {(k.harga || 0).toLocaleString('id-ID')}/hari
                     </p>
-                    <div className="flex items-center gap-2 mt-1.5">
+                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                        k.is_full_hari_ini
-                          ? 'bg-red-500/90 text-white'
-                          : isSelected ? 'bg-emerald-400 text-stone-900' : 'bg-emerald-100 text-emerald-800'
+                        k.is_full_hari_ini || k.status_hari_ini === 'full'
+                          ? 'bg-red-500 text-white'
+                          : k.status_hari_ini === 'limited' || (k.stok_hari_ini !== undefined && k.stok_hari_ini <= 1)
+                            ? isSelected ? 'bg-amber-300 text-stone-900' : 'bg-amber-100 text-amber-900 border border-amber-300'
+                            : isSelected ? 'bg-emerald-400 text-stone-900' : 'bg-emerald-100 text-emerald-800'
                       }`}>
-                        Hari Ini: {k.is_full_hari_ini ? 'Penuh' : `Sisa ${k.stok_hari_ini ?? k.stok_tersedia}`}
+                        Hari Ini: {k.is_full_hari_ini || k.status_hari_ini === 'full' ? 'Penuh' : k.status_hari_ini === 'limited' ? `Menipis (${k.stok_hari_ini})` : `Sisa ${k.stok_hari_ini ?? k.stok_tersedia}`}
                       </span>
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                        k.is_full_besok
-                          ? 'bg-red-500/90 text-white'
-                          : isSelected ? 'bg-emerald-300 text-stone-900' : 'bg-stone-100 text-stone-600'
+                        k.is_full_besok || k.status_besok === 'full'
+                          ? 'bg-red-500 text-white'
+                          : k.status_besok === 'limited' || (k.stok_besok !== undefined && k.stok_besok <= 1)
+                            ? isSelected ? 'bg-amber-300 text-stone-900' : 'bg-amber-100 text-amber-900 border border-amber-300'
+                            : isSelected ? 'bg-emerald-300 text-stone-900' : 'bg-stone-100 text-stone-600'
                       }`}>
-                        Besok: {k.is_full_besok ? 'Penuh' : `Sisa ${k.stok_besok ?? k.stok_tersedia}`}
+                        Besok: {k.is_full_besok || k.status_besok === 'full' ? 'Penuh' : k.status_besok === 'limited' ? `Menipis (${k.stok_besok})` : `Sisa ${k.stok_besok ?? k.stok_tersedia}`}
                       </span>
                     </div>
                   </div>
@@ -1159,11 +1166,18 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
             {/* Header: Kebaya Title + Month Controls */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
               <div>
-                <h3 className="font-bold text-sm text-[#2C1A0E] flex items-center gap-2">
+                <h3 className="font-bold text-sm text-[#2C1A0E] flex items-center gap-2 flex-wrap">
                   <span>Kalender Sewa: {activeKebaya?.nama || 'Pilih Kebaya'}</span>
                   <span className="text-[11px] bg-stone-100 text-stone-700 font-bold px-2 py-0.5 rounded border">
-                    Stok: {activeKebaya?.stok || calData?.totalStock || 1} Unit
+                    {selectedUkuran === 'all'
+                      ? `Total Stok: ${activeKebaya?.stok || calData?.totalStock || 1} Unit`
+                      : `Stok Ukuran ${selectedUkuran}: ${calData?.totalStock || 0} Unit`}
                   </span>
+                  {selectedUkuran !== 'all' && (
+                    <span className="text-[10px] bg-amber-50 text-amber-900 font-bold px-2 py-0.5 rounded border border-amber-300">
+                      Filter Aktif: Ukuran {selectedUkuran}
+                    </span>
+                  )}
                 </h3>
                 <p className="text-xs text-stone-500 mt-0.5">
                   Klik tanggal untuk melihat daftar pelanggan/transaksi yang menyewa pada tanggal tersebut.
@@ -1192,6 +1206,44 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                 </button>
               </div>
+            </div>
+
+            {/* Size Filter Toolbar */}
+            <div className="flex items-center justify-between gap-3 flex-wrap bg-stone-50 p-3 rounded-xl border border-stone-200">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-bold text-stone-600 mr-1">Filter Ukuran:</span>
+                {['all', 'XS', 'S', 'M', 'L', 'XL', 'XXL'].map(uk => {
+                  const isSelected = selectedUkuran === uk;
+                  const label = uk === 'all' ? 'Semua Ukuran' : `Ukuran ${uk}`;
+                  const count = uk === 'all'
+                    ? (activeKebaya?.stok || 0)
+                    : (activeKebaya?.stok_per_ukuran?.[uk] ?? 0);
+                  return (
+                    <button
+                      key={uk}
+                      type="button"
+                      onClick={() => setSelectedUkuran(uk)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#2C1A0E] text-white shadow-xs ring-1 ring-[#2C1A0E]'
+                          : 'bg-white hover:bg-stone-200 text-stone-700 border border-stone-200'
+                      }`}
+                    >
+                      <span>{label}</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                        isSelected ? 'bg-amber-400 text-stone-900' : 'bg-stone-100 text-stone-600'
+                      }`}>
+                        {count} unit
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {calData?.onlyRemainingSize && (
+                <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
+                  Tersedia tinggal ukuran {calData.onlyRemainingSize} saja!
+                </span>
+              )}
             </div>
 
             {/* Matrix Grid */}
@@ -1231,27 +1283,48 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
                   const isToday = dayStr === todayStr;
                   const isTomorrow = dayStr === tomorrowStr;
                   const isSelected = dayStr === selectedDay;
-                  const isFull = dayObj.isFull;
-                  const isLimited = dayObj.status === 'limited';
 
-                  let cellStyle = 'bg-white border-stone-200 text-stone-800 hover:border-stone-400';
+                  const isFull = dayObj.isFull || dayObj.status === 'full';
+                  const isLimited = !isFull && (dayObj.status === 'limited' || dayObj.availableSlots <= 1);
+                  const isAvailableDay = !isFull && !isLimited;
+
+                  let cellStyle = 'bg-emerald-50/40 border-emerald-300 text-stone-800 hover:border-emerald-500 hover:bg-emerald-50/70 cursor-pointer';
+                  let markDot = <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.7)] shrink-0" title="Tersedia" />;
                   let badge = (
-                    <span className="text-[9px] font-semibold text-emerald-700 block truncate">
-                      {dayObj.availableSlots} slot
+                    <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200 truncate w-full">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0" />
+                      Tersedia ({dayObj.availableSlots})
                     </span>
                   );
 
                   if (isFull) {
-                    cellStyle = 'bg-red-50/90 border-red-200 text-red-600 cursor-pointer hover:border-red-400';
-                    badge = <span className="text-[9px] font-bold text-red-600 block">Penuh (0 slot)</span>;
+                    cellStyle = 'bg-red-50/95 border-red-300 text-red-950 hover:border-red-500 hover:bg-red-100/70 cursor-pointer';
+                    markDot = <span className="w-2 h-2 rounded-full bg-red-600 shadow-[0_0_5px_rgba(239,68,68,0.7)] shrink-0" title="Full Booked (0 Slot)" />;
+                    badge = (
+                      <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-200 text-red-900 border border-red-300 truncate w-full">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-600 shrink-0" />
+                        Full Booked
+                      </span>
+                    );
                   } else if (isLimited) {
-                    cellStyle = 'bg-amber-50/90 border-amber-300 text-amber-900 hover:border-amber-500 cursor-pointer';
-                    badge = <span className="text-[9px] font-bold text-amber-700 block">Sisa 1</span>;
+                    cellStyle = 'bg-amber-50/90 border-amber-300 text-amber-950 hover:border-amber-500 hover:bg-amber-100/70 cursor-pointer';
+                    markDot = <span className="w-2 h-2 rounded-full bg-amber-500 shadow-[0_0_5px_rgba(245,158,11,0.7)] shrink-0 animate-pulse" title="Stok Menipis" />;
+                    badge = (
+                      <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 border border-amber-300 truncate w-full">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-600 shrink-0" />
+                        Menipis (Sisa {dayObj.availableSlots})
+                      </span>
+                    );
                   }
 
                   if (isSelected) {
                     cellStyle = 'bg-[#2C1A0E] text-white border-[#2C1A0E] shadow-sm ring-2 ring-[#2C1A0E]/30';
-                    badge = <span className="text-[9px] font-bold text-amber-300 block">Terpilih</span>;
+                    badge = (
+                      <span className="inline-flex items-center gap-1 text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-400 text-stone-900 shadow-xs truncate w-full">
+                        <span>Terpilih</span>
+                        <span className="text-[8px] font-normal opacity-80">({dayObj.availableSlots} slot)</span>
+                      </span>
+                    );
                   }
 
                   return (
@@ -1260,7 +1333,7 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
                       type="button"
                       onClick={() => setSelectedDay(selectedDay === dayStr ? null : dayStr)}
                       className={`h-16 p-1.5 rounded-lg border text-left flex flex-col justify-between transition-all ${cellStyle}`}
-                      title={isFull ? `Tanggal ${dayStr}: Stok Penuh (${dayObj.bookedCount} unit disewa)` : `Tanggal ${dayStr}: Tersedia ${dayObj.availableSlots} slot unit`}
+                      title={isFull ? `Tanggal ${dayStr}: Stok Penuh (${dayObj.bookedCount} unit disewa)` : isLimited ? `Tanggal ${dayStr}: Stok Menipis (Sisa ${dayObj.availableSlots} slot unit)` : `Tanggal ${dayStr}: Tersedia ${dayObj.availableSlots} slot unit`}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1">
@@ -1278,11 +1351,7 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
                             </span>
                           )}
                         </div>
-                        {isFull && <span className="w-1.5 h-1.5 rounded-full bg-red-500" />}
-                        {!isFull && isLimited && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />}
-                        {!isFull && !isLimited && !isSelected && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        )}
+                        {!isSelected && markDot}
                       </div>
                       {badge}
                     </button>
@@ -1292,22 +1361,25 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
             </div>
 
             {/* Legend & Filter reset */}
-            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-stone-600 pt-2 border-t border-stone-100">
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-sm bg-white border border-stone-300 inline-block" />
-                  <span>Tersedia</span>
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-stone-700 pt-2 border-t border-stone-200">
+              <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+                <div className="flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 shadow-[0_0_4px_rgba(16,185,129,0.7)]" />
+                  <span className="font-semibold text-emerald-900">Tersedia</span>
+                  <span className="text-[10px] text-emerald-700">(&gt;1 Unit)</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-sm bg-amber-100 border border-amber-300 inline-block" />
-                  <span>Menipis (Sisa 1)</span>
+                <div className="flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-300">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shadow-[0_0_4px_rgba(245,158,11,0.7)]" />
+                  <span className="font-semibold text-amber-950">Stok Menipis</span>
+                  <span className="text-[10px] text-amber-800">(Sisa &le;1-2 Unit)</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-sm bg-red-100 border border-red-300 inline-block" />
-                  <span className="font-semibold text-red-600">Full Booked (Penuh)</span>
+                <div className="flex items-center gap-1.5 bg-red-50 px-2.5 py-1 rounded-md border border-red-300">
+                  <span className="w-2.5 h-2.5 rounded-full bg-red-600 shadow-[0_0_4px_rgba(239,68,68,0.7)]" />
+                  <span className="font-bold text-red-900">Full Booked</span>
+                  <span className="text-[10px] text-red-700">(0 Slot / Habis)</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-sm bg-[#2C1A0E] inline-block" />
+                <div className="flex items-center gap-1.5 bg-stone-100 px-2.5 py-1 rounded-md border border-stone-300">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#2C1A0E]" />
                   <span className="font-semibold text-[#2C1A0E]">Tanggal Terpilih</span>
                 </div>
               </div>
@@ -1418,7 +1490,7 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
             <thead className="bg-stone-50 text-stone-500 uppercase font-semibold text-[11px] border-b">
               <tr>
                 <th className="px-4 py-3 text-left">Busana Kebaya</th>
-                <th className="px-4 py-3 text-center">Total Unit</th>
+                <th className="px-4 py-3 text-center">Total & Rincian Ukuran</th>
                 <th className="px-4 py-3 text-center">Ketersediaan Hari Ini ({todayStr})</th>
                 <th className="px-4 py-3 text-center">Ketersediaan Besok ({tomorrowStr})</th>
                 <th className="px-4 py-3 text-center">Status Katalog</th>
@@ -1428,6 +1500,7 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
             <tbody className="divide-y divide-stone-100">
               {items.map(k => {
                 const isSelected = k.slug === selectedSlug;
+                const stockMap = k.stok_per_ukuran || {};
                 return (
                   <tr key={k.slug} className={`hover:bg-stone-50/80 transition ${isSelected ? 'bg-amber-50/40' : ''}`}>
                     <td className="px-4 py-3">
@@ -1445,27 +1518,66 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-center font-bold text-stone-800 text-sm">
-                      {k.stok ?? 1}
+                    <td className="px-4 py-3 text-center">
+                      <div className="font-bold text-stone-900 text-sm mb-1">{k.stok ?? 1} Unit</div>
+                      <div className="flex items-center justify-center gap-1 flex-wrap max-w-[200px] mx-auto">
+                        {['XS', 'S', 'M', 'L', 'XL', 'XXL'].map(sz => {
+                          const count = stockMap[sz] ?? 0;
+                          if (count <= 0) return null;
+                          return (
+                            <span key={sz} className="text-[9px] px-1 py-0.2 rounded bg-stone-100 text-stone-700 font-mono border">
+                              {sz}:{count}
+                            </span>
+                          );
+                        })}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-center">
-                      {k.is_full_hari_ini ? (
-                        <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">
+                      {k.only_remaining_size_hari_ini ? (
+                        <div className="space-y-1">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
+                            Sisa Ukuran {k.only_remaining_size_hari_ini} Saja!
+                          </span>
+                        </div>
+                      ) : k.is_full_hari_ini || k.status_hari_ini === 'full' ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-600" />
                           Full Booked (0 Sisa)
                         </span>
+                      ) : k.status_hari_ini === 'limited' || (k.stok_hari_ini !== undefined && k.stok_hari_ini <= 1) ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
+                          Menipis • Sisa {k.stok_hari_ini ?? k.stok_tersedia ?? 1} Unit
+                        </span>
                       ) : (
-                        <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
                           Tersedia • Sisa {k.stok_hari_ini ?? k.stok_tersedia ?? 1} Unit
                         </span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      {k.is_full_besok ? (
-                        <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">
+                      {k.only_remaining_size_besok ? (
+                        <div className="space-y-1">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
+                            Sisa Ukuran {k.only_remaining_size_besok} Saja!
+                          </span>
+                        </div>
+                      ) : k.is_full_besok || k.status_besok === 'full' ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-600" />
                           Full Booked (0 Sisa)
                         </span>
+                      ) : k.status_besok === 'limited' || (k.stok_besok !== undefined && k.stok_besok <= 1) ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
+                          Menipis • Sisa {k.stok_besok ?? k.stok_tersedia ?? 1} Unit
+                        </span>
                       ) : (
-                        <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
                           Tersedia • Sisa {k.stok_besok ?? k.stok_tersedia ?? 1} Unit
                         </span>
                       )}

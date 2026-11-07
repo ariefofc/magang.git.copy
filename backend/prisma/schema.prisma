@@ -169,6 +169,7 @@ model Kebaya {
   deskripsi        String?                 @db.Text
   harga            Int                     @default(0)
   stok             Int                     @default(1)
+  stokPerUkuran    String?                 @map("stok_per_ukuran") @db.Text
   foto             String?                 @db.VarChar(500)
   fotoBelakang     String?                 @map("foto_belakang") @db.VarChar(500)
   kainUtama        String?                 @map("kain_utama") @db.VarChar(500)
@@ -181,8 +182,24 @@ model Kebaya {
   updatedAt        DateTime                @updatedAt @map("updated_at")
 
   availabilityHistory KebayaAvailabilityHistory[]
+  stokUkuran          KebayaUkuran[]
 
   @@map("kebaya")
+}
+
+model KebayaUkuran {
+  id        Int      @id @default(autoincrement())
+  kebayaId  Int      @map("kebaya_id")
+  ukuran    String   @db.VarChar(10)
+  stok      Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  kebaya    Kebaya   @relation(fields: [kebayaId], references: [id], onDelete: Cascade)
+
+  @@unique([kebayaId, ukuran])
+  @@index([kebayaId])
+  @@map("kebaya_ukuran")
 }
 
 enum KebayaStatus {

@@ -1,5 +1,5 @@
 /**
- * KebayaService - Prisma-based (migrated from hardcoded + JSON)
+ * KebayaService - Prisma-based with per-size dynamic stock and availability
  */
 const prisma = require('../prisma');
 
@@ -12,6 +12,46 @@ const ACTIVE_RENTAL_STATUSES = [
   'Kebaya Telah Diambil',
   'Mengajukan Pengembalian',
 ];
+
+const STANDARD_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+
+function classifySlotStatus(availableSlots, totalStock, isKebayaActive = true) {
+  if (!isKebayaActive) return 'disabled';
+  if (availableSlots <= 0) return 'full'; // Full Booked
+  if (availableSlots <= 1 || (totalStock >= 4 && availableSlots <= 2)) return 'limited'; // Stok Menipis
+  return 'available'; // Tersedia
+}
+
+function getStockMap(kebaya) {
+  const map = { XS: 0, S: 0, M: 0, L: 0, XL: 0, XXL: 0 };
+  if (Array.isArray(kebaya.stokUkuran) && kebaya.stokUkuran.length > 0) {
+    kebaya.stokUkuran.forEach((su) => {
+      if (su.ukuran) map[su.ukuran] = su.stok;
+    });
+    return map;
+  }
+  if (kebaya.stokPerUkuran) {
+    try {
+      const parsed = typeof kebaya.stokPerUkuran === 'string' ? JSON.parse(kebaya.stokPerUkuran) : kebaya.stokPerUkuran;
+      STANDARD_SIZES.forEach((sz) => {
+        if (parsed[sz] !== undefined) map[sz] = Number(parsed[sz]) || 0;
+      });
+      return map;
+    } catch (e) {}
+  }
+  // Default distribution if none set yet: distribute kebaya.stok across sizes
+  const total = kebaya.stok || 1;
+  if (total === 1) map.M = 1;
+  else if (total === 2) { map.S = 1; map.M = 1; }
+  else if (total === 3) { map.S = 1; map.M = 1; map.L = 1; }
+  else if (total === 4) { map.XS = 1; map.S = 1; map.M = 1; map.L = 1; }
+  else if (total === 5) { map.XS = 1; map.S = 1; map.M = 2; map.L = 1; }
+  else {
+    map.XS = 1; map.S = 1; map.M = 2; map.L = 1; map.XL = 1;
+    if (total > 6) map.XXL = total - 6;
+  }
+  return map;
+}
 
 class KebayaService {
   async enrichWithStock(kebayaList) {
@@ -34,6 +74,7 @@ class KebayaService {
       },
       select: {
         namaKebaya: true,
+        ukuran: true,
         tanggalSewa: true,
         tanggalPengembalian: true,
       },
@@ -41,21 +82,29 @@ class KebayaService {
 
     const bookedTodayMap = {};
     const bookedTomorrowMap = {};
+    const bookedTodaySizeMap = {};
+    const bookedTomorrowSizeMap = {};
 
     activeRentals.forEach((r) => {
       const sewaStr = r.tanggalSewa ? r.tanggalSewa.toISOString().slice(0, 10) : '';
       const kembaliStr = r.tanggalPengembalian ? r.tanggalPengembalian.toISOString().slice(0, 10) : '';
+      const uk = r.ukuran || 'M';
 
       if (sewaStr <= todayStr && kembaliStr >= todayStr) {
         bookedTodayMap[r.namaKebaya] = (bookedTodayMap[r.namaKebaya] || 0) + 1;
+        if (!bookedTodaySizeMap[r.namaKebaya]) bookedTodaySizeMap[r.namaKebaya] = {};
+        bookedTodaySizeMap[r.namaKebaya][uk] = (bookedTodaySizeMap[r.namaKebaya][uk] || 0) + 1;
       }
       if (sewaStr <= tomorrowStr && kembaliStr >= tomorrowStr) {
         bookedTomorrowMap[r.namaKebaya] = (bookedTomorrowMap[r.namaKebaya] || 0) + 1;
+        if (!bookedTomorrowSizeMap[r.namaKebaya]) bookedTomorrowSizeMap[r.namaKebaya] = {};
+        bookedTomorrowSizeMap[r.namaKebaya][uk] = (bookedTomorrowSizeMap[r.namaKebaya][uk] || 0) + 1;
       }
     });
 
     return kebayaList.map((k) => {
-      const totalStok = k.stok ?? 1;
+      const stockMap = getStockMap(k);
+      const totalStok = Object.values(stockMap).reduce((a, b) => a + b, 0) || (k.stok ?? 1);
       const bookedToday = bookedTodayMap[k.nama] || 0;
       const bookedTomorrow = bookedTomorrowMap[k.nama] || 0;
 
@@ -63,6 +112,44 @@ class KebayaService {
       const stokBesok = Math.max(0, totalStok - bookedTomorrow);
       const isFullHariIni = bookedToday >= totalStok;
       const isFullBesok = bookedTomorrow >= totalStok;
+
+      // Per-size breakdown for today and tomorrow
+      const stokHariIniPerUkuran = {};
+      const stokBesokPerUkuran = {};
+      const statusHariIniPerUkuran = {};
+      const statusBesokPerUkuran = {};
+
+      const todaySizeRentals = bookedTodaySizeMap[k.nama] || {};
+      const tomorrowSizeRentals = bookedTomorrowSizeMap[k.nama] || {};
+
+      STANDARD_SIZES.forEach((sz) => {
+        const szTotal = stockMap[sz] || 0;
+        const bToday = todaySizeRentals[sz] || 0;
+        const bTomorrow = tomorrowSizeRentals[sz] || 0;
+
+        const sHariIni = Math.max(0, szTotal - bToday);
+        const sBesok = Math.max(0, szTotal - bTomorrow);
+
+        stokHariIniPerUkuran[sz] = sHariIni;
+        stokBesokPerUkuran[sz] = sBesok;
+        statusHariIniPerUkuran[sz] = classifySlotStatus(sHariIni, szTotal, k.status === 'aktif');
+        statusBesokPerUkuran[sz] = classifySlotStatus(sBesok, szTotal, k.status === 'aktif');
+      });
+
+      const availableSizesHariIni = STANDARD_SIZES.filter(
+        (sz) => (stockMap[sz] || 0) > 0 && stokHariIniPerUkuran[sz] > 0
+      );
+      const onlyRemainingSizeHariIni =
+        availableSizesHariIni.length === 1 ? availableSizesHariIni[0] : null;
+
+      const availableSizesBesok = STANDARD_SIZES.filter(
+        (sz) => (stockMap[sz] || 0) > 0 && stokBesokPerUkuran[sz] > 0
+      );
+      const onlyRemainingSizeBesok =
+        availableSizesBesok.length === 1 ? availableSizesBesok[0] : null;
+
+      const statusHariIni = classifySlotStatus(stokHariIni, totalStok, k.status === 'aktif');
+      const statusBesok = classifySlotStatus(stokBesok, totalStok, k.status === 'aktif');
 
       const stokTersedia = stokHariIni;
       const stokDisewa = bookedToday;
@@ -83,6 +170,17 @@ class KebayaService {
         stokBesok,
         isFullHariIni,
         isFullBesok,
+        statusHariIni,
+        statusBesok,
+        stokPerUkuran: stockMap,
+        stokHariIniPerUkuran,
+        stokBesokPerUkuran,
+        statusHariIniPerUkuran,
+        statusBesokPerUkuran,
+        availableSizesHariIni,
+        onlyRemainingSizeHariIni,
+        availableSizesBesok,
+        onlyRemainingSizeBesok,
         tersediaHariIni: k.status === 'aktif' && !isFullHariIni,
         tersediaBesok: k.status === 'aktif' && !isFullBesok,
         tersedia,
@@ -92,20 +190,27 @@ class KebayaService {
   }
 
   async getAll() {
-    const list = await prisma.kebaya.findMany({ orderBy: { id: 'asc' } });
+    const list = await prisma.kebaya.findMany({
+      include: { stokUkuran: true },
+      orderBy: { id: 'asc' },
+    });
     return this.enrichWithStock(list);
   }
 
   async getPublic() {
     const list = await prisma.kebaya.findMany({
       where: { status: { in: ['aktif', 'segera'] } },
+      include: { stokUkuran: true },
       orderBy: { id: 'asc' },
     });
     return this.enrichWithStock(list);
   }
 
   async findBySlug(slug) {
-    const k = await prisma.kebaya.findUnique({ where: { slug } });
+    const k = await prisma.kebaya.findUnique({
+      where: { slug },
+      include: { stokUkuran: true },
+    });
     if (!k) return null;
     const [enriched] = await this.enrichWithStock([k]);
     return enriched;
@@ -120,7 +225,6 @@ class KebayaService {
   }
 
   async update(slug, data) {
-    // If nama changed, regenerate slug
     if (data.nama) {
       data.slug = data.nama.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     }
@@ -177,9 +281,15 @@ class KebayaService {
     return next;
   }
 
-  async getAvailabilityCalendar(slug, targetYear, targetMonth) {
-    const kebaya = await prisma.kebaya.findUnique({ where: { slug } });
+  async getAvailabilityCalendar(slug, targetYear, targetMonth, targetUkuran = null) {
+    const kebaya = await prisma.kebaya.findUnique({
+      where: { slug },
+      include: { stokUkuran: true },
+    });
     if (!kebaya) return null;
+
+    const stockMap = getStockMap(kebaya);
+    const filterUkuran = targetUkuran && targetUkuran !== 'all' ? targetUkuran : null;
 
     const now = new Date();
     const y = parseInt(targetYear) || now.getFullYear();
@@ -206,71 +316,111 @@ class KebayaService {
       },
     });
 
-    const totalStock = kebaya.stok ?? 1;
     const isKebayaActive = kebaya.status === 'aktif';
     const daysInMonth = new Date(y, m, 0).getDate();
     const calendarDays = {};
 
+    const overallTotalStock = Object.values(stockMap).reduce((a, b) => a + b, 0) || (kebaya.stok ?? 1);
+    const sizeStock = filterUkuran ? (stockMap[filterUkuran] || 0) : overallTotalStock;
+
     for (let day = 1; day <= daysInMonth; day++) {
       const dayStr = `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      let bookedOnDay = 0;
+
+      const rentalsOnDay = [];
+      const bookedPerSizeOnDay = {};
 
       activeRentals.forEach((r) => {
         const sewaStr = r.tanggalSewa ? r.tanggalSewa.toISOString().slice(0, 10) : '';
         const kembaliStr = r.tanggalPengembalian ? r.tanggalPengembalian.toISOString().slice(0, 10) : '';
         if (sewaStr <= dayStr && kembaliStr >= dayStr) {
-          bookedOnDay++;
+          rentalsOnDay.push(r);
+          const uk = r.ukuran || 'M';
+          bookedPerSizeOnDay[uk] = (bookedPerSizeOnDay[uk] || 0) + 1;
         }
       });
 
-      const availableSlots = Math.max(0, totalStock - bookedOnDay);
-      const isFull = !isKebayaActive || bookedOnDay >= totalStock;
+      // Per-size breakdown for this day
+      const sizesBreakdown = {};
+      STANDARD_SIZES.forEach((sz) => {
+        const szStock = stockMap[sz] || 0;
+        const szBooked = bookedPerSizeOnDay[sz] || 0;
+        const szAvail = Math.max(0, szStock - szBooked);
+        const szFull = szStock <= 0 || szBooked >= szStock;
+        sizesBreakdown[sz] = {
+          stock: szStock,
+          booked: szBooked,
+          availableSlots: szAvail,
+          isFull: szFull,
+          status: classifySlotStatus(szAvail, szStock, isKebayaActive),
+        };
+      });
 
-      let statusLabel = 'available';
-      if (!isKebayaActive) {
-        statusLabel = 'disabled';
-      } else if (isFull) {
-        statusLabel = 'full';
-      } else if (availableSlots === 1 && totalStock > 1) {
-        statusLabel = 'limited';
+      const availableSizes = STANDARD_SIZES.filter(
+        (sz) => (stockMap[sz] || 0) > 0 && sizesBreakdown[sz].availableSlots > 0
+      );
+      const availableSizesCount = availableSizes.length;
+      const onlyRemainingSize = availableSizesCount === 1 ? availableSizes[0] : null;
+
+      let bookedOnDay = 0;
+      if (filterUkuran) {
+        bookedOnDay = bookedPerSizeOnDay[filterUkuran] || 0;
+      } else {
+        bookedOnDay = rentalsOnDay.length;
       }
+
+      const availableSlots = Math.max(0, sizeStock - bookedOnDay);
+      const isFull = !isKebayaActive || sizeStock <= 0 || bookedOnDay >= sizeStock;
+      const statusLabel = classifySlotStatus(availableSlots, sizeStock, isKebayaActive);
 
       calendarDays[dayStr] = {
         date: dayStr,
         day,
-        totalStock,
+        totalStock: sizeStock,
         bookedCount: bookedOnDay,
         availableSlots,
         isFull,
         status: statusLabel,
+        targetUkuran: filterUkuran || 'all',
+        sizes: sizesBreakdown,
+        availableSizes,
+        availableSizesCount,
+        onlyRemainingSize,
       };
     }
 
     return {
       slug: kebaya.slug,
       nama: kebaya.nama,
-      totalStock,
+      totalStock: sizeStock,
+      targetUkuran: filterUkuran || 'all',
+      stokPerUkuran: stockMap,
       kebayaStatus: kebaya.status,
       year: y,
       month: m,
       days: calendarDays,
-      bookedRanges: activeRentals.map((r) => ({
-        kode: r.kodeTransaksi,
-        start: r.tanggalSewa ? r.tanggalSewa.toISOString().slice(0, 10) : null,
-        end: r.tanggalPengembalian ? r.tanggalPengembalian.toISOString().slice(0, 10) : null,
-        status: r.status,
-        user: r.namaUser || 'Pelanggan',
-        noWa: r.noWa || '',
-        ukuran: r.ukuran || 'M',
-      })),
+      bookedRanges: activeRentals
+        .filter((r) => !filterUkuran || r.ukuran === filterUkuran)
+        .map((r) => ({
+          kode: r.kodeTransaksi,
+          start: r.tanggalSewa ? r.tanggalSewa.toISOString().slice(0, 10) : null,
+          end: r.tanggalPengembalian ? r.tanggalPengembalian.toISOString().slice(0, 10) : null,
+          status: r.status,
+          user: r.namaUser || 'Pelanggan',
+          noWa: r.noWa || '',
+          ukuran: r.ukuran || 'M',
+        })),
     };
   }
 
-  async checkRangeAvailability(slug, startStr, endStr) {
-    const kebaya = await prisma.kebaya.findUnique({ where: { slug } });
+  async checkRangeAvailability(slug, startStr, endStr, targetUkuran = null) {
+    const kebaya = await prisma.kebaya.findUnique({
+      where: { slug },
+      include: { stokUkuran: true },
+    });
     if (!kebaya) return null;
 
-    const totalStock = kebaya.stok ?? 1;
+    const stockMap = getStockMap(kebaya);
+    const filterUkuran = targetUkuran && targetUkuran !== 'all' ? targetUkuran : null;
     const isKebayaActive = kebaya.status === 'aktif';
 
     const now = new Date();
@@ -295,13 +445,25 @@ class KebayaService {
         tanggalSewa: true,
         tanggalPengembalian: true,
         status: true,
+        ukuran: true,
       },
     });
 
+    const overallTotalStock = Object.values(stockMap).reduce((a, b) => a + b, 0) || (kebaya.stok ?? 1);
+    const sizeStock = filterUkuran ? (stockMap[filterUkuran] || 0) : overallTotalStock;
+
     const fullDates = [];
     const dailyDetails = {};
-    let minAvailable = totalStock;
+    let minAvailable = sizeStock;
     let maxBooked = 0;
+
+    // Track min availability across range for EACH size
+    const minAvailPerSize = {};
+    const fullDatesPerSize = {};
+    STANDARD_SIZES.forEach((sz) => {
+      minAvailPerSize[sz] = stockMap[sz] || 0;
+      fullDatesPerSize[sz] = [];
+    });
 
     let curr = new Date(validStart + 'T00:00:00.000Z');
     const endBound = new Date(validEnd + 'T00:00:00.000Z');
@@ -309,17 +471,32 @@ class KebayaService {
     while (curr <= endBound) {
       const dStr = curr.toISOString().slice(0, 10);
       let bookedOnDay = 0;
+      const bookedPerSizeOnDay = {};
 
       activeRentals.forEach((r) => {
         const sewa = r.tanggalSewa ? r.tanggalSewa.toISOString().slice(0, 10) : '';
         const kembali = r.tanggalPengembalian ? r.tanggalPengembalian.toISOString().slice(0, 10) : '';
         if (sewa <= dStr && kembali >= dStr) {
-          bookedOnDay++;
+          const uk = r.ukuran || 'M';
+          bookedPerSizeOnDay[uk] = (bookedPerSizeOnDay[uk] || 0) + 1;
+          if (!filterUkuran || uk === filterUkuran) {
+            bookedOnDay++;
+          }
         }
       });
 
-      const availableSlots = Math.max(0, totalStock - bookedOnDay);
-      const isFull = !isKebayaActive || bookedOnDay >= totalStock;
+      // Update per-size min available and full dates
+      STANDARD_SIZES.forEach((sz) => {
+        const szStock = stockMap[sz] || 0;
+        const bCount = bookedPerSizeOnDay[sz] || 0;
+        const aSlots = Math.max(0, szStock - bCount);
+        if (aSlots < minAvailPerSize[sz]) minAvailPerSize[sz] = aSlots;
+        if (szStock <= 0 || bCount >= szStock) fullDatesPerSize[sz].push(dStr);
+      });
+
+      const availableSlots = Math.max(0, sizeStock - bookedOnDay);
+      const isFull = !isKebayaActive || sizeStock <= 0 || bookedOnDay >= sizeStock;
+      const statusLabel = classifySlotStatus(availableSlots, sizeStock, isKebayaActive);
 
       if (isFull) fullDates.push(dStr);
       if (availableSlots < minAvailable) minAvailable = availableSlots;
@@ -327,10 +504,11 @@ class KebayaService {
 
       dailyDetails[dStr] = {
         date: dStr,
-        totalStock,
+        totalStock: sizeStock,
         bookedCount: bookedOnDay,
         availableSlots,
         isFull,
+        status: statusLabel,
       };
 
       curr.setUTCDate(curr.getUTCDate() + 1);
@@ -338,11 +516,57 @@ class KebayaService {
 
     const isFull = !isKebayaActive || minAvailable <= 0;
     const isAvailable = isKebayaActive && minAvailable > 0;
+    const overallStatus = !isKebayaActive
+      ? 'disabled'
+      : isFull
+        ? 'full_booked'
+        : classifySlotStatus(minAvailable, sizeStock, isKebayaActive) === 'limited'
+          ? 'limited'
+          : 'available';
+
+    // Sizes available across the ENTIRE range
+    const availableSizesAcrossRange = STANDARD_SIZES.filter(
+      (sz) => (stockMap[sz] || 0) > 0 && minAvailPerSize[sz] > 0
+    );
+    const availableSizesCount = availableSizesAcrossRange.length;
+    const onlyRemainingSize = availableSizesCount === 1 ? availableSizesAcrossRange[0] : null;
+
+    // Summary for all sizes across the range
+    const sizesSummary = {};
+    STANDARD_SIZES.forEach((sz) => {
+      const szStock = stockMap[sz] || 0;
+      const szMinAvail = minAvailPerSize[sz];
+      const szFull = szStock <= 0 || szMinAvail <= 0;
+      sizesSummary[sz] = {
+        stock: szStock,
+        minAvailableSlots: szMinAvail,
+        isFull: szFull,
+        fullDates: fullDatesPerSize[sz],
+        status: classifySlotStatus(szMinAvail, szStock, isKebayaActive),
+      };
+    });
+
+    let message = '';
+    if (!isKebayaActive) {
+      message = 'Kebaya sedang nonaktif / tidak tersedia untuk disewa.';
+    } else if (availableSizesCount === 0) {
+      message = 'Semua ukuran kebaya Full Booked pada rentang tanggal ini.';
+    } else if (onlyRemainingSize) {
+      message = `Tersedia tinggal ukuran ${onlyRemainingSize} saja! (Sisa ${minAvailPerSize[onlyRemainingSize]} unit)`;
+    } else if (filterUkuran && isFull) {
+      message = `Ukuran ${filterUkuran} Full Booked pada rentang tanggal ini. Ukuran lain (${availableSizesAcrossRange.join(', ')}) masih tersedia!`;
+    } else if (filterUkuran && isAvailable) {
+      message = `Ukuran ${filterUkuran} Tersedia (${minAvailable} unit siap sewa)`;
+    } else {
+      message = `Tersedia ukuran ${availableSizesAcrossRange.join(', ')} (${minAvailable} unit)`;
+    }
 
     return {
       slug: kebaya.slug,
       nama: kebaya.nama,
-      totalStock,
+      totalStock: sizeStock,
+      selectedUkuran: filterUkuran,
+      stokPerUkuran: stockMap,
       kebayaStatus: kebaya.status,
       startDate: validStart,
       endDate: validEnd,
@@ -351,7 +575,12 @@ class KebayaService {
       isFull,
       isAvailable,
       fullDates,
-      status: !isKebayaActive ? 'disabled' : isFull ? 'full_booked' : (minAvailable === 1 && totalStock > 1 ? 'limited' : 'available'),
+      status: overallStatus,
+      sizesSummary,
+      availableSizes: availableSizesAcrossRange,
+      availableSizesCount,
+      onlyRemainingSize,
+      message,
       dailyDetails,
     };
   }

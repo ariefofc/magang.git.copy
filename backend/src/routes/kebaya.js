@@ -31,6 +31,17 @@ const toPublic = (k) => ({
   stok_besok: k.stokBesok ?? k.stokTersedia ?? 1,
   is_full_hari_ini: k.isFullHariIni ?? false,
   is_full_besok: k.isFullBesok ?? false,
+  status_hari_ini: k.statusHariIni || (k.isFullHariIni ? 'full' : 'available'),
+  status_besok: k.statusBesok || (k.isFullBesok ? 'full' : 'available'),
+  stok_per_ukuran: k.stokPerUkuran || {},
+  stok_hari_ini_per_ukuran: k.stokHariIniPerUkuran || {},
+  stok_besok_per_ukuran: k.stokBesokPerUkuran || {},
+  status_hari_ini_per_ukuran: k.statusHariIniPerUkuran || {},
+  status_besok_per_ukuran: k.statusBesokPerUkuran || {},
+  available_sizes_hari_ini: k.availableSizesHariIni || [],
+  only_remaining_size_hari_ini: k.onlyRemainingSizeHariIni || null,
+  available_sizes_besok: k.availableSizesBesok || [],
+  only_remaining_size_besok: k.onlyRemainingSizeBesok || null,
   tersedia_hari_ini: k.tersediaHariIni ?? true,
   tersedia_besok: k.tersediaBesok ?? true,
   foto_url: k.foto ? `/images/${k.foto}` : null,
@@ -58,6 +69,17 @@ const toAdmin = (k) => ({
   stok_besok: k.stokBesok ?? k.stokTersedia ?? 1,
   is_full_hari_ini: k.isFullHariIni ?? false,
   is_full_besok: k.isFullBesok ?? false,
+  status_hari_ini: k.statusHariIni || (k.isFullHariIni ? 'full' : 'available'),
+  status_besok: k.statusBesok || (k.isFullBesok ? 'full' : 'available'),
+  stok_per_ukuran: k.stokPerUkuran || {},
+  stok_hari_ini_per_ukuran: k.stokHariIniPerUkuran || {},
+  stok_besok_per_ukuran: k.stokBesokPerUkuran || {},
+  status_hari_ini_per_ukuran: k.statusHariIniPerUkuran || {},
+  status_besok_per_ukuran: k.statusBesokPerUkuran || {},
+  available_sizes_hari_ini: k.availableSizesHariIni || [],
+  only_remaining_size_hari_ini: k.onlyRemainingSizeHariIni || null,
+  available_sizes_besok: k.availableSizesBesok || [],
+  only_remaining_size_besok: k.onlyRemainingSizeBesok || null,
   foto: k.foto,
   foto_belakang: k.fotoBelakang,
   kain_utama: k.kainUtama,
@@ -91,11 +113,11 @@ router.get('/all', auth, checkRole('admin', 'super_admin'), async (req, res) => 
   }
 });
 
-// GET /api/kebaya/:slug/calendar — Availability calendar matrix
+// GET /api/kebaya/:slug/calendar — Availability calendar matrix (supports ?ukuran=M)
 router.get('/:slug/calendar', async (req, res) => {
   try {
-    const { year, month } = req.query;
-    const cal = await svc.getAvailabilityCalendar(req.params.slug, year, month);
+    const { year, month, ukuran } = req.query;
+    const cal = await svc.getAvailabilityCalendar(req.params.slug, year, month, ukuran);
     if (!cal) return res.status(404).json({ message: 'Kebaya tidak ditemukan.' });
     res.json(cal);
   } catch (err) {
@@ -103,11 +125,11 @@ router.get('/:slug/calendar', async (req, res) => {
   }
 });
 
-// GET /api/kebaya/:slug/check-range — Real-time availability for custom date range
+// GET /api/kebaya/:slug/check-range — Real-time availability for custom date range & size
 router.get('/:slug/check-range', async (req, res) => {
   try {
-    const { start, end } = req.query;
-    const result = await svc.checkRangeAvailability(req.params.slug, start, end);
+    const { start, end, ukuran } = req.query;
+    const result = await svc.checkRangeAvailability(req.params.slug, start, end, ukuran);
     if (!result) return res.status(404).json({ message: 'Kebaya tidak ditemukan.' });
     res.json(result);
   } catch (err) {

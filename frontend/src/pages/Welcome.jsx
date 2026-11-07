@@ -227,7 +227,13 @@ function SewaModal({ kebaya, onClose }) {
 
 function KebayaCard({ k }) {
   const [showBack, setShowBack] = useState(false);
-  const isAvailable = k.tersedia && (k.stok_tersedia ?? 1) > 0;
+  const isFullToday = k.is_full_hari_ini || k.status_hari_ini === 'full';
+  const isLimitedToday = !isFullToday && (k.status_hari_ini === 'limited' || (k.stok_hari_ini !== undefined && k.stok_hari_ini <= 1));
+  const isAvailable = k.tersedia && !isFullToday;
+
+  const isFullTomorrow = k.is_full_besok || k.status_besok === 'full';
+  const isLimitedTomorrow = !isFullTomorrow && (k.status_besok === 'limited' || (k.stok_besok !== undefined && k.stok_besok <= 1));
+
   const currentImg = showBack && k.gambarBelakang ? k.gambarBelakang : k.gambar;
 
   return (
@@ -244,15 +250,25 @@ function KebayaCard({ k }) {
 
         {/* Top Floating Badges */}
         <div className="absolute top-3 inset-x-3 flex items-center justify-between pointer-events-none">
-          {isAvailable ? (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-600 text-white shadow-md">
-              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-              Tersedia • Sisa {k.stok_hari_ini ?? k.stok_tersedia}
+          {k.only_remaining_size_hari_ini ? (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-600 text-white shadow-md animate-pulse border border-amber-300">
+              <span className="w-2 h-2 rounded-full bg-white shrink-0" />
+              Sisa Ukuran {k.only_remaining_size_hari_ini} Saja!
             </span>
-          ) : (
+          ) : isFullToday ? (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-600 text-white shadow-md">
               <span className="w-2 h-2 rounded-full bg-white" />
               Full Booked
+            </span>
+          ) : isLimitedToday ? (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-600 text-white shadow-md">
+              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              Stok Menipis • Sisa {k.stok_hari_ini ?? k.stok_tersedia}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-600 text-white shadow-md">
+              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              Tersedia • Sisa {k.stok_hari_ini ?? k.stok_tersedia}
             </span>
           )}
 
@@ -287,17 +303,23 @@ function KebayaCard({ k }) {
       <div className="p-5 flex-1 flex flex-col justify-between">
         <div>
           <div className="flex items-center justify-between text-xs mb-1">
-            <span className={`inline-flex items-center gap-1 font-semibold ${isAvailable ? 'text-emerald-700' : 'text-red-600'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${isAvailable ? 'bg-emerald-500' : 'bg-red-500'}`} />
-              Hari Ini: {isAvailable ? `Sisa ${k.stok_hari_ini ?? k.stok_tersedia} unit` : 'Penuh'}
+            <span className={`inline-flex items-center gap-1 font-semibold ${
+              isFullToday ? 'text-red-600' : isLimitedToday ? 'text-amber-800' : 'text-emerald-700'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                isFullToday ? 'bg-red-500' : isLimitedToday ? 'bg-amber-500' : 'bg-emerald-500'
+              }`} />
+              Hari Ini: {isFullToday ? 'Penuh (0 slot)' : isLimitedToday ? `Menipis (Sisa ${k.stok_hari_ini ?? k.stok_tersedia})` : `Sisa ${k.stok_hari_ini ?? k.stok_tersedia} unit`}
             </span>
             <span className="text-stone-400">Total: {k.stok || 1} unit</span>
           </div>
 
           <div className="text-[11px] text-stone-500 mb-2 flex items-center gap-1">
             <span>Besok:</span>
-            {k.is_full_besok ? (
-              <span className="text-red-600 font-bold">Penuh</span>
+            {isFullTomorrow ? (
+              <span className="text-red-600 font-bold">Full Booked</span>
+            ) : isLimitedTomorrow ? (
+              <span className="text-amber-800 font-bold">Stok Menipis (Sisa {k.stok_besok ?? k.stok_tersedia} unit)</span>
             ) : (
               <span className="text-emerald-700 font-semibold">Tersedia (Sisa {k.stok_besok ?? k.stok_tersedia} unit)</span>
             )}
@@ -347,6 +369,11 @@ export default function Welcome() {
         stok_besok: k.stok_besok ?? k.stok_tersedia ?? 1,
         is_full_hari_ini: k.is_full_hari_ini ?? false,
         is_full_besok: k.is_full_besok ?? false,
+        status_hari_ini: k.status_hari_ini ?? 'available',
+        status_besok: k.status_besok ?? 'available',
+        stok_per_ukuran: k.stok_per_ukuran ?? {},
+        only_remaining_size_hari_ini: k.only_remaining_size_hari_ini ?? null,
+        only_remaining_size_besok: k.only_remaining_size_besok ?? null,
         tersedia: k.tersedia ?? true,
       })))
     }).catch(() => {})

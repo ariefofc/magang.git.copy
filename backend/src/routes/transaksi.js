@@ -237,16 +237,16 @@ router.post('/', async (req, res) => {
       return res.status(422).json({ message: 'Field wajib belum lengkap.' });
     }
 
-    // Stock and availability check via dynamic database calendar
+    // Stock and availability check via dynamic database calendar with size validation
     const kebayaObj = await prisma.kebaya.findFirst({ where: { nama: kebayaName } });
     if (!kebayaObj) return res.status(404).json({ message: 'Kebaya tidak ditemukan.' });
     const maxStock = kebayaObj.stok || 1;
 
-    const rangeAvail = await kebayaSvc.checkRangeAvailability(kebayaObj.slug, tanggal_sewa, tanggal_pengembalian);
+    const rangeAvail = await kebayaSvc.checkRangeAvailability(kebayaObj.slug, tanggal_sewa, tanggal_pengembalian, ukuran);
     if (!rangeAvail || rangeAvail.isFull || rangeAvail.minAvailableSlots <= 0) {
       const datesMsg = rangeAvail?.fullDates?.length > 0 ? ` (Penuh pada: ${rangeAvail.fullDates.join(', ')})` : '';
       return res.status(422).json({
-        message: `Stok kebaya "${kebayaName}" (${maxStock} unit) sudah penuh pada rentang tanggal tersebut${datesMsg}. Silakan pilih tanggal lain.`,
+        message: `Stok kebaya "${kebayaName}" ukuran ${ukuran} (${rangeAvail?.totalStock || 1} unit) sudah penuh pada rentang tanggal tersebut${datesMsg}. Silakan pilih ukuran atau tanggal lain.`,
       });
     }
 
