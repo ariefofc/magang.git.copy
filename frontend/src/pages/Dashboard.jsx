@@ -101,6 +101,8 @@ export default function Dashboard() {
   const [kebaya, setKebaya] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
+  const [sortBy, setSortBy] = useState('');
+  const [sortOrder, setSortOrder] = useState('asc');
 
   // Filters (for laporan)
   const [filters, setFilters] = useState({ year: '', month: '', week: '', start_date: '', end_date: '', status: '' });
@@ -116,16 +118,18 @@ export default function Dashboard() {
   const [availabilityHistory, setAvailabilityHistory] = useState([]);
 
   // ── Fetch dashboard data ──
-  const fetchDashboard = useCallback(async (p = page, f = filters) => {
+  const fetchDashboard = useCallback(async (p = page, f = filters, sb = sortBy, so = sortOrder) => {
     setLoading(true);
     try {
       const params = { page: p };
+      if (sb) params.sort_by = sb;
+      if (so) params.sort_order = so;
       Object.entries(f).forEach(([k, v]) => { if (v) params[k] = v; });
       const res = await api.get('/transaksi/dashboard', { params });
       setData(res.data);
     } catch { /* ignore */ }
     setLoading(false);
-  }, [page, filters]);
+  }, [page, filters, sortBy, sortOrder]);
 
   const fetchKebaya = useCallback(async () => {
     try {
@@ -141,7 +145,7 @@ export default function Dashboard() {
     } catch { setAvailabilityHistory([]); }
   }, []);
 
-  useEffect(() => { fetchDashboard(); }, [page]); // eslint-disable-line
+  useEffect(() => { fetchDashboard(page, filters, sortBy, sortOrder); }, [page, sortBy, sortOrder]); // eslint-disable-line
   useEffect(() => { if (activeTab === 'katalog' || activeTab === 'monitoring_ketersediaan') fetchKebaya(); }, [activeTab]); // eslint-disable-line
   useEffect(() => { if (activeTab === 'riwayat_tersedia') fetchAvailabilityHistory(); }, [activeTab]); // eslint-disable-line
 
@@ -300,6 +304,10 @@ export default function Dashboard() {
               pagination={pagination}
               page={page}
               setPage={setPage}
+              sortBy={sortBy}
+              setSortBy={setSortBy}
+              sortOrder={sortOrder}
+              setSortOrder={setSortOrder}
               onStatusChange={updateStatus}
               onDelete={deleteTransaksi}
             />
@@ -373,17 +381,82 @@ function StatusBadge({ status }) {
 }
 
 // ── TAB: Pemesanan ──
-function TabPemesanan({ rows, pagination, page, setPage, onStatusChange, onDelete }) {
+function TabPemesanan({
+  rows,
+  pagination,
+  page,
+  setPage,
+  sortBy,
+  setSortBy,
+  sortOrder,
+  setSortOrder,
+  onStatusChange,
+  onDelete,
+}) {
+  const toggleTanggalSewaSort = () => {
+    if (sortBy !== 'tanggal_sewa') {
+      setSortBy('tanggal_sewa');
+      setSortOrder('asc');
+    } else if (sortOrder === 'asc') {
+      setSortOrder('desc');
+    } else {
+      setSortBy('');
+      setSortOrder('asc');
+    }
+    setPage(1);
+  };
+
   return (
     <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-      <div className="px-6 py-4 border-b"><h3 className="font-bold text-[#2C1A0E]">Daftar Pemesanan</h3></div>
+      <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-4">
+        <h3 className="font-bold text-[#2C1A0E]">Daftar Pemesanan</h3>
+        <div className="flex items-center gap-2 text-xs">
+          <label className="text-gray-500 font-medium">Urutkan Tanggal Sewa:</label>
+          <select
+            value={sortBy === 'tanggal_sewa' ? sortOrder : ''}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (!val) {
+                setSortBy('');
+                setSortOrder('asc');
+              } else {
+                setSortBy('tanggal_sewa');
+                setSortOrder(val);
+              }
+              setPage(1);
+            }}
+            className="border rounded-lg px-2.5 py-1.5 bg-white text-[#2C1A0E] font-medium focus:outline-none focus:ring-1 focus:ring-amber-500"
+          >
+            <option value="">Default (ID / Waktu Input)</option>
+            <option value="asc">Tanggal Sewa Terdekat (Asc)</option>
+            <option value="desc">Tanggal Sewa Terjauh (Desc)</option>
+          </select>
+        </div>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
             <tr>
-              {['No', 'Kode Transaksi', 'Kebaya', 'Customer', 'Ukuran', 'Tanggal Sewa', 'Status', 'Harga', 'Aksi'].map(h => (
-                <th key={h} className="px-4 py-3 text-left font-medium">{h}</th>
-              ))}
+              <th className="px-4 py-3 text-left font-medium">No</th>
+              <th className="px-4 py-3 text-left font-medium">Kode Transaksi</th>
+              <th className="px-4 py-3 text-left font-medium">Kebaya</th>
+              <th className="px-4 py-3 text-left font-medium">Customer</th>
+              <th className="px-4 py-3 text-left font-medium">Ukuran</th>
+              <th
+                onClick={toggleTanggalSewaSort}
+                className="px-4 py-3 text-left font-medium cursor-pointer select-none hover:text-[#2C1A0E] transition"
+                title="Klik untuk mengubah urutan tanggal sewa"
+              >
+                <div className="flex items-center gap-1.5">
+                  <span>Tanggal Sewa</span>
+                  <span className={`text-xs font-bold ${sortBy === 'tanggal_sewa' ? 'text-amber-700' : 'text-gray-400'}`}>
+                    {sortBy === 'tanggal_sewa' ? (sortOrder === 'asc' ? '▲' : '▼') : '⇅'}
+                  </span>
+                </div>
+              </th>
+              <th className="px-4 py-3 text-left font-medium">Status</th>
+              <th className="px-4 py-3 text-left font-medium">Harga</th>
+              <th className="px-4 py-3 text-left font-medium">Aksi</th>
             </tr>
           </thead>
           <tbody className="divide-y">

@@ -117,13 +117,17 @@ router.get('/dashboard', auth, async (req, res) => {
   try {
     const where = buildWhereClause(req.query);
     const sortOrder = getSortOrder(req.query);
+    const sortBy = (req.query.sort_by || '').toLowerCase();
+    const orderBy = (sortBy === 'tanggal_sewa' || sortBy === 'tanggalsewa')
+      ? [{ tanggalSewa: sortOrder }, { id: sortOrder }]
+      : [{ createdAt: sortOrder }, { id: sortOrder }];
     const page = parseInt(req.query.page) || 1;
     const perPage = 15;
 
     const [transaksi, total] = await Promise.all([
       prisma.transaksiSewa.findMany({
         where,
-        orderBy: [{ createdAt: sortOrder }, { id: sortOrder }],
+        orderBy,
         skip: (page - 1) * perPage,
         take: perPage,
       }),
@@ -132,7 +136,7 @@ router.get('/dashboard', auth, async (req, res) => {
 
     const allTransaksi = await prisma.transaksiSewa.findMany({
       where,
-      orderBy: [{ createdAt: sortOrder }, { id: sortOrder }],
+      orderBy,
     });
 
     const totalPendapatan = allTransaksi.reduce((sum, t) => sum + Number(t.totalHarga), 0);
