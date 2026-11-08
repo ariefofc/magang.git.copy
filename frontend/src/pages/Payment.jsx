@@ -17,6 +17,14 @@ export default function Payment() {
     try {
       const res = await api.get(`/payment/${id}`);
       setData(res.data);
+      if (res.data?.transaksi) {
+        setStatus({
+          paymentStatus: res.data.transaksi.paymentStatus,
+          status: res.data.isPaid || res.data.transaksi.paymentStatus === 'paid' || res.data.transaksi.sudahBayar ? 'paid' : res.data.transaksi.status,
+          sudahBayar: res.data.transaksi.sudahBayar,
+          isPaid: res.data.isPaid || res.data.transaksi.paymentStatus === 'paid' || res.data.transaksi.sudahBayar,
+        });
+      }
     } catch (err) {
       setError(err.response?.data?.message || 'Gagal memuat data pembayaran');
     } finally {
@@ -42,22 +50,42 @@ export default function Payment() {
 
   const handleMidtransPay = () => {
     if (!data?.snapUrl || !data?.snapToken) return;
+    const triggerSnap = () => {
+      window.snap.pay(data.snapToken, {
+        onSuccess: async () => { await pollStatus(); },
+        onPending: async () => { await pollStatus(); },
+        onError: () => { setError('Pembayaran gagal atau dibatalkan.'); },
+        onClose: async () => { await pollStatus(); },
+      });
+    };
+
     const existing = document.getElementById('midtrans-snap');
     if (!existing) {
       const script = document.createElement('script');
       script.id = 'midtrans-snap';
       script.src = data.snapUrl;
       script.setAttribute('data-client-key', data.clientKey || '');
-      script.onload = () => window.snap.pay(data.snapToken);
+      script.onload = triggerSnap;
       document.head.appendChild(script);
     } else {
-      window.snap.pay(data.snapToken);
+      triggerSnap();
     }
   };
 
   const handleRefreshQris = async () => {
-    setLoading(true);
-    await fetchPayment();
+    try {
+      setLoading(true);
+      const res = await api.get(`/payment/${id}/refresh-qris`);
+      if (res.data?.qrisImageData) {
+        setData((d) => ({ ...d, qrisImageData: res.data.qrisImageData }));
+      } else {
+        await fetchPayment();
+      }
+    } catch {
+      await fetchPayment();
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSimulate = async () => {
@@ -87,7 +115,15 @@ export default function Payment() {
     </div>
   );
 
-  const paid = status?.status === 'paid' || status?.status === 'settlement';
+  const paid =
+    status?.paymentStatus === 'paid' ||
+    status?.status === 'paid' ||
+    status?.status === 'settlement' ||
+    status?.sudahBayar === true ||
+    status?.isPaid === true ||
+    data?.isPaid === true ||
+    data?.transaksi?.paymentStatus === 'paid' ||
+    data?.transaksi?.sudahBayar === true;
 
   return (
     <div className="min-h-screen bg-[#FAF8F5] py-10 px-4">

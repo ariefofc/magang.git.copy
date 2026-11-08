@@ -8,6 +8,14 @@ const { generateQrisDynamic, toBase64Png, crc16Hex } = require('../helpers/qris'
 // ═══════════════════════════════════════════════════════
 //  HELPERS
 // ═══════════════════════════════════════════════════════
+function findTransaksi(idOrKode) {
+  const clean = String(idOrKode || '').trim();
+  const isNum = /^\d+$/.test(clean);
+  return prisma.transaksiSewa.findUnique({
+    where: isNum ? { id: parseInt(clean) } : { kodeTransaksi: clean },
+  });
+}
+
 function nominalDP(t) {
   const skema = (t.skemaBayar || 'dp 50%').toLowerCase();
   let pct = 0.5;
@@ -23,7 +31,9 @@ function labelSkema(t) {
   return 'DP 50%';
 }
 
-function isPaid(t) { return t.paymentStatus === 'paid'; }
+function isPaid(t) {
+  return t.paymentStatus === 'paid' || t.sudahBayar === true;
+}
 
 function getSnap() {
   return new midtransClient.Snap({
@@ -52,31 +62,29 @@ function isMidtransReady() {
 // GET /api/payment/:id - Payment page data
 router.get('/:id', async (req, res) => {
   try {
-    const transaksi = await prisma.transaksiSewa.findUnique({
-      where: { id: parseInt(req.params.id) },
-    });
+    const transaksi = await findTransaksi(req.params.id);
     if (!transaksi) return res.status(404).json({ message: 'Transaksi tidak ditemukan.' });
 
     const nominal = nominalDP(transaksi);
     const skema = labelSkema(transaksi);
     const midtransReady = isMidtransReady();
+    const paid = isPaid(transaksi);
 
-    let snapToken = null, snapError = null;
-    if (midtransReady && !isPaid(transaksi)) {
+    let snapToken = transaksi.snapToken || null, snapError = null;
+    if (midtransReady && !paid && !snapToken) {
       try {
         const snap = getSnap();
-        const orderId = transaksi.kodeTransaksi + '-' + Date.now();
+        const orderId = `${transaksi.kodeTransaksi}-${Date.now()}`;
         const result = await snap.createTransaction({
           transaction_details: { order_id: orderId, gross_amount: nominal },
           customer_details: { first_name: transaksi.namaUser, phone: transaksi.noWa },
           item_details: [{
             id: 'KEBAYA-' + transaksi.id,
             price: nominal, quantity: 1,
-            name: `Sewa ${transaksi.namaKebaya} (${skema})`,
+            name: `Sewa ${transaksi.namaKebaya} (${skema})`.substring(0, 50),
           }],
           enabled_payments: ['qris', 'gopay', 'shopeepay', 'dana', 'ovo', 'bank_transfer'],
           expiry: {
-            start_time: new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' +0700'),
             unit: 'minutes',
             duration: parseInt(process.env.MIDTRANS_EXPIRY_MINUTES) || 30,
           },
@@ -89,14 +97,52 @@ router.get('/:id', async (req, res) => {
       } catch (e) { snapError = e.message; }
     }
 
-    // QRIS DANA fallback
+    // Midtrans QRIS or static QRIS
     let qrisImageData = null, qrisError = null;
-    const staticString = process.env.QRIS_STATIC_STRING || '';
-    if (!snapToken && staticString && staticString !== 'TEMPEL_RAW_STRING_QRIS_DANA_BISNIS_ANDA_DI_SINI' && !isPaid(transaksi)) {
-      try {
-        const payload = generateQrisDynamic(staticString, nominal);
-        qrisImageData = await toBase64Png(payload, parseInt(process.env.QRIS_QR_SIZE) || 280);
-      } catch (e) { qrisError = e.message; }
+    if (!paid) {
+      if (midtransReady) {
+        try {
+          const core = getCoreApi();
+          const qrisOrderId = `${transaksi.kodeTransaksi}-QRIS-${Date.now()}`;
+          const charge = await core.charge({
+            payment_type: 'qris',
+            transaction_details: {
+              order_id: qrisOrderId,
+              gross_amount: nominal,
+            },
+            qris: { acquirer: 'gopay' },
+            customer_details: { first_name: transaksi.namaUser, phone: transaksi.noWa },
+          });
+
+          if (charge.qr_string) {
+            qrisImageData = await toBase64Png(charge.qr_string, parseInt(process.env.QRIS_QR_SIZE) || 280);
+          } else if (charge.actions && charge.actions[0]?.url) {
+            qrisImageData = charge.actions[0].url;
+          }
+
+          if (qrisImageData) {
+            await prisma.transaksiSewa.update({
+              where: { id: transaksi.id },
+              data: {
+                qrisUrl: charge.actions?.[0]?.url || null,
+                transactionId: transaksi.transactionId || qrisOrderId,
+              },
+            });
+          }
+        } catch (e) {
+          qrisError = e.message;
+        }
+      }
+
+      if (!qrisImageData) {
+        const staticString = (process.env.QRIS_STATIC_STRING || '').trim();
+        if (staticString && staticString.startsWith('00020101') && staticString !== 'TEMPEL_RAW_STRING_QRIS_DANA_BISNIS_ANDA_DI_SINI') {
+          try {
+            const payload = generateQrisDynamic(staticString, nominal);
+            qrisImageData = await toBase64Png(payload, parseInt(process.env.QRIS_QR_SIZE) || 280);
+          } catch (e) { qrisError = e.message; }
+        }
+      }
     }
 
     res.json({
@@ -108,6 +154,7 @@ router.get('/:id', async (req, res) => {
       gambar_ai: transaksi.gambarAiResult ? (transaksi.gambarAiResult.startsWith('data:') ? transaksi.gambarAiResult : `/${transaksi.gambarAiResult}`) : null,
       nominal,
       skema,
+      isPaid: paid,
       midtransReady,
       snapToken,
       snapError,
@@ -124,9 +171,7 @@ router.get('/:id', async (req, res) => {
 // POST /api/payment/:id/initiate - Generate Snap token
 router.post('/:id/initiate', async (req, res) => {
   try {
-    const transaksi = await prisma.transaksiSewa.findUnique({
-      where: { id: parseInt(req.params.id) },
-    });
+    const transaksi = await findTransaksi(req.params.id);
     if (!transaksi) return res.status(404).json({ message: 'Not found' });
     if (isPaid(transaksi)) return res.json({ success: false, message: 'Sudah lunas.', paid: true });
 
@@ -140,16 +185,20 @@ router.post('/:id/initiate', async (req, res) => {
 
     const nominal = nominalDP(transaksi);
     const snap = getSnap();
-    const orderId = transaksi.kodeTransaksi + '-' + Date.now();
+    const orderId = `${transaksi.kodeTransaksi}-${Date.now()}`;
 
     const result = await snap.createTransaction({
       transaction_details: { order_id: orderId, gross_amount: nominal },
       customer_details: { first_name: transaksi.namaUser, phone: transaksi.noWa },
       item_details: [{
         id: 'KEBAYA-' + transaksi.id, price: nominal, quantity: 1,
-        name: `Sewa ${transaksi.namaKebaya} (${labelSkema(transaksi)})`,
+        name: `Sewa ${transaksi.namaKebaya} (${labelSkema(transaksi)})`.substring(0, 50),
       }],
       enabled_payments: ['qris', 'gopay', 'shopeepay', 'dana', 'ovo', 'bank_transfer'],
+      expiry: {
+        unit: 'minutes',
+        duration: parseInt(process.env.MIDTRANS_EXPIRY_MINUTES) || 30,
+      },
     });
 
     await prisma.transaksiSewa.update({
@@ -170,12 +219,37 @@ router.post('/:id/initiate', async (req, res) => {
 // GET /api/payment/:id/status
 router.get('/:id/status', async (req, res) => {
   try {
-    const t = await prisma.transaksiSewa.findUnique({
-      where: { id: parseInt(req.params.id) },
-      select: { paymentStatus: true, status: true, paidAt: true },
-    });
+    let t = await findTransaksi(req.params.id);
     if (!t) return res.status(404).json({ message: 'Not found' });
-    res.json(t);
+
+    // Active polling fallback via Midtrans Core API when pending
+    if (t.paymentStatus !== 'paid' && !t.sudahBayar && t.transactionId && isMidtransReady()) {
+      try {
+        const core = getCoreApi();
+        const midtransRes = await core.transaction.status(t.transactionId);
+        if (midtransRes.transaction_status === 'settlement' || midtransRes.transaction_status === 'capture') {
+          t = await prisma.transaksiSewa.update({
+            where: { id: t.id },
+            data: {
+              paymentStatus: 'paid',
+              sudahBayar: true,
+              paidAt: new Date(),
+              jumlahDibayar: parseInt(midtransRes.gross_amount) || nominalDP(t),
+              status: 'Menunggu Konfirmasi',
+            },
+          });
+        }
+      } catch { /* Midtrans status check silent fail */ }
+    }
+
+    const isPaidStatus = isPaid(t);
+    res.json({
+      paymentStatus: t.paymentStatus,
+      status: isPaidStatus ? 'paid' : t.status,
+      sudahBayar: t.sudahBayar,
+      paidAt: t.paidAt,
+      isPaid: isPaidStatus,
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -184,13 +258,43 @@ router.get('/:id/status', async (req, res) => {
 // GET /api/payment/:id/refresh-qris
 router.get('/:id/refresh-qris', async (req, res) => {
   try {
-    const t = await prisma.transaksiSewa.findUnique({ where: { id: parseInt(req.params.id) } });
+    const t = await findTransaksi(req.params.id);
     if (!t) return res.status(404).json({ message: 'Not found' });
 
     const nominal = nominalDP(t);
-    const staticString = process.env.QRIS_STATIC_STRING || '';
-    const payload = generateQrisDynamic(staticString, nominal);
-    const qrisImageData = await toBase64Png(payload, parseInt(process.env.QRIS_QR_SIZE) || 280);
+    let qrisImageData = null;
+
+    if (isMidtransReady() && !isPaid(t)) {
+      try {
+        const core = getCoreApi();
+        const qrisOrderId = `${t.kodeTransaksi}-QRIS-${Date.now()}`;
+        const charge = await core.charge({
+          payment_type: 'qris',
+          transaction_details: { order_id: qrisOrderId, gross_amount: nominal },
+          qris: { acquirer: 'gopay' },
+          customer_details: { first_name: t.namaUser, phone: t.noWa },
+        });
+        if (charge.qr_string) {
+          qrisImageData = await toBase64Png(charge.qr_string, parseInt(process.env.QRIS_QR_SIZE) || 280);
+        } else if (charge.actions?.[0]?.url) {
+          qrisImageData = charge.actions[0].url;
+        }
+        if (qrisImageData) {
+          await prisma.transaksiSewa.update({
+            where: { id: t.id },
+            data: { transactionId: qrisOrderId },
+          });
+        }
+      } catch { /* fallback */ }
+    }
+
+    if (!qrisImageData) {
+      const staticString = (process.env.QRIS_STATIC_STRING || '').trim();
+      if (staticString && staticString.startsWith('00020101')) {
+        const payload = generateQrisDynamic(staticString, nominal);
+        qrisImageData = await toBase64Png(payload, parseInt(process.env.QRIS_QR_SIZE) || 280);
+      }
+    }
 
     res.json({ success: true, qrisImageData, nominal });
   } catch (err) {
@@ -201,13 +305,16 @@ router.get('/:id/refresh-qris', async (req, res) => {
 // POST /api/payment/:id/confirm-qris (Admin manual)
 router.post('/:id/confirm-qris', auth, checkRole('admin', 'super_admin'), async (req, res) => {
   try {
+    const t = await findTransaksi(req.params.id);
+    if (!t) return res.status(404).json({ message: 'Not found' });
+
     const transaksi = await prisma.transaksiSewa.update({
-      where: { id: parseInt(req.params.id) },
+      where: { id: t.id },
       data: {
         paymentStatus: 'paid',
         sudahBayar: true,
         paidAt: new Date(),
-        jumlahDibayar: nominalDP(await prisma.transaksiSewa.findUnique({ where: { id: parseInt(req.params.id) } })),
+        jumlahDibayar: nominalDP(t),
         status: 'Menunggu Konfirmasi',
       },
     });
@@ -223,7 +330,7 @@ router.post('/:id/simulate-sandbox', async (req, res) => {
     if (process.env.MIDTRANS_IS_PRODUCTION === 'true') {
       return res.status(400).json({ message: 'Simulasi hanya untuk sandbox.' });
     }
-    const t = await prisma.transaksiSewa.findUnique({ where: { id: parseInt(req.params.id) } });
+    const t = await findTransaksi(req.params.id);
     if (!t) return res.status(404).json({ message: 'Not found' });
 
     const transaksi = await prisma.transaksiSewa.update({
@@ -236,7 +343,7 @@ router.post('/:id/simulate-sandbox', async (req, res) => {
         status: 'Menunggu Konfirmasi',
       },
     });
-    res.json({ success: true, message: 'Pembayaran sandbox berhasil disimulasikan.', transaksi });
+    res.json({ success: true, message: 'Pembayaran sandbox berhasil disimulasikan.', transaksi, isPaid: true, status: 'paid' });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -250,9 +357,19 @@ router.post('/webhook/midtrans', async (req, res) => {
     const transactionStatus = notification.transaction_status;
     const fraudStatus = notification.fraud_status;
 
-    const transaksi = await prisma.transaksiSewa.findFirst({
+    let transaksi = await prisma.transaksiSewa.findFirst({
       where: { transactionId: orderId },
     });
+
+    if (!transaksi && orderId) {
+      const parts = orderId.split('-');
+      if (parts.length >= 2) {
+        const kode = `${parts[0]}-${parts[1]}`;
+        transaksi = await prisma.transaksiSewa.findUnique({
+          where: { kodeTransaksi: kode },
+        });
+      }
+    }
 
     if (!transaksi) {
       return res.status(404).json({ message: 'Transaksi tidak ditemukan.' });
