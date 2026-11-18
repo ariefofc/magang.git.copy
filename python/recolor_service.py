@@ -22,21 +22,21 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import base64
 import io
+import logging
 import os
 import re
 import urllib.request
-from pathlib import Path
 
 try:
-    from PIL import Image, ImageFilter
+    from PIL import Image
     import numpy as np
     import cv2
     import onnxruntime as ort
     ort.set_default_logger_severity(3)
     HAS_DEPS = True
-except ImportError as e:
+except ImportError:
     HAS_DEPS = False
-    print(f"WARN: Missing dependency: {e}")
+    logging.warning("Missing dependency for AI recolor service.")
 
 app = Flask(__name__)
 CORS(app, origins=[
@@ -59,11 +59,9 @@ def get_ort_session():
     if not os.path.exists(MODEL_PATH):
         try:
             os.makedirs(MODEL_DIR, exist_ok=True)
-            print("Downloading AI Multiclass ONNX model (15.6 MB)...")
             urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-            print("AI ONNX model downloaded successfully.")
-        except Exception as e:
-            print(f"Could not download AI model: {e}")
+        except Exception as err:
+            logging.warning("Could not download AI model: %s", err)
             return None
     try:
         opts = ort.SessionOptions()
@@ -71,8 +69,8 @@ def get_ort_session():
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         _ort_session = ort.InferenceSession(MODEL_PATH, sess_options=opts, providers=['CPUExecutionProvider'])
         return _ort_session
-    except Exception as e:
-        print(f"Failed to load ONNX model: {e}")
+    except Exception as err:
+        logging.error("Failed to load ONNX model: %s", err)
         return None
 
 # Pre-load model on module load if available
@@ -479,13 +477,4 @@ def recolor_endpoint():
 #  ENTRY POINT
 # ============================================================================
 if __name__ == "__main__":
-    banner = [
-        "=" * 64,
-        "  MS Harmony AI Kebaya Recolor Service v7.0",
-        "  Engine: AI Multiclass CPU ONNX + CIELAB Photometric Recolor",
-        "  Status: 100% Local, Zero GPU, Free to Use",
-        "  Endpoint: http://127.0.0.1:5001",
-        "=" * 64,
-    ]
-    print("\n".join(banner))
     app.run(host="127.0.0.1", port=5001, debug=False, threaded=True)

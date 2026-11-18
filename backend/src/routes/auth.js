@@ -67,7 +67,7 @@ router.post('/login', async (req, res) => {
 });
 
 // POST /api/auth/logout
-router.post('/logout', auth, (req, res) => {
+router.post('/logout', auth, (_req, res) => {
   res.clearCookie('token');
   res.json({ message: 'Berhasil logout.' });
 });

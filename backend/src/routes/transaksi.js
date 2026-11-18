@@ -101,13 +101,6 @@ function nominalDP(transaksi) {
   return Math.ceil(Number(transaksi.totalHarga) * pct);
 }
 
-function labelSkema(transaksi) {
-  const skema = (transaksi.skemaBayar || '').toLowerCase();
-  if (skema.includes('70')) return 'DP 70%';
-  if (skema.includes('100') || skema.includes('lunas')) return 'Lunas 100%';
-  return 'DP 50%';
-}
-
 // ═══════════════════════════════════════════════════════
 //  ROUTES
 // ═══════════════════════════════════════════════════════
@@ -244,8 +237,6 @@ router.post('/', async (req, res) => {
     // Stock and availability check via dynamic database calendar with size validation
     const kebayaObj = await prisma.kebaya.findFirst({ where: { nama: kebayaName } });
     if (!kebayaObj) return res.status(404).json({ message: 'Kebaya tidak ditemukan.' });
-    const maxStock = kebayaObj.stok || 1;
-
     const rangeAvail = await kebayaSvc.checkRangeAvailability(kebayaObj.slug, tanggal_sewa, tanggal_pengembalian, ukuran);
     if (!rangeAvail || rangeAvail.isFull || rangeAvail.minAvailableSlots <= 0) {
       const datesMsg = rangeAvail?.fullDates?.length > 0 ? ` (Penuh pada: ${rangeAvail.fullDates.join(', ')})` : '';

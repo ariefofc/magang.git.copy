@@ -64,7 +64,7 @@ const FAQS = [
 // ═══════════════════════════════════════════════════════
 
 // GET /api/chat/faq
-router.get('/faq', async (req, res) => {
+router.get('/faq', async (_req, res) => {
   try {
     res.json({ faqs: FAQS });
   } catch (err) {
@@ -264,7 +264,7 @@ router.post('/:roomId/quick-reply', async (req, res) => {
 // ═══════════════════════════════════════════════════════
 
 // GET /api/chat/admin/inbox
-router.get('/admin/inbox', auth, checkRole('admin', 'super_admin'), async (req, res) => {
+router.get('/admin/inbox', auth, checkRole('admin', 'super_admin'), async (_req, res) => {
   try {
     const rooms = await prisma.chatRoom.findMany({
       include: {
@@ -289,7 +289,7 @@ router.get('/admin/inbox', auth, checkRole('admin', 'super_admin'), async (req, 
 });
 
 // GET /api/chat/admin/rooms
-router.get('/admin/rooms', auth, checkRole('admin', 'super_admin'), async (req, res) => {
+router.get('/admin/rooms', auth, checkRole('admin', 'super_admin'), async (_req, res) => {
   try {
     const rooms = await prisma.chatRoom.findMany({
       include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } },
@@ -343,7 +343,7 @@ router.patch('/:roomId/:action', auth, checkRole('admin', 'super_admin'), async 
 });
 
 // GET /api/chat/admin/faq
-router.get('/admin/faq', auth, checkRole('admin', 'super_admin'), async (req, res) => {
+router.get('/admin/faq', auth, checkRole('admin', 'super_admin'), async (_req, res) => {
   try {
     res.json({ faqs: FAQS });
   } catch (err) {

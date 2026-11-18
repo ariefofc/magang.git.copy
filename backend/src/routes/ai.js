@@ -24,8 +24,8 @@ router.post('/recolor', async (req, res) => {
         auto_mask: pyRes.data.auto_mask || false,
       });
     }
-  } catch (e) {
-    console.log('[AI Recolor] Python service unavailable:', e.message);
+  } catch (err) {
+    console.warn('[AI Recolor] Python service unavailable:', err.message);
   }
 
   // Tier 2: Google Gemini API
@@ -71,8 +71,8 @@ router.post('/recolor', async (req, res) => {
         }
       }
     }
-  } catch (e) {
-    console.log('[AI Recolor] Google AI unavailable:', e.message);
+  } catch (err) {
+    console.warn('[AI Recolor] Google AI unavailable:', err.message);
   }
 
   // Tier 3: fallback

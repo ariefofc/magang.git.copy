@@ -1359,7 +1359,6 @@ function TabMonitoringKetersediaan({ items = [], onRefresh }) {
 
                   const isFull = dayObj.isFull || dayObj.status === 'full';
                   const isLimited = !isFull && (dayObj.status === 'limited' || dayObj.availableSlots <= 1);
-                  const isAvailableDay = !isFull && !isLimited;
 
                   let cellStyle = 'bg-emerald-50/40 border-emerald-300 text-stone-800 hover:border-emerald-500 hover:bg-emerald-50/70 cursor-pointer';
                   let markDot = <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.7)] shrink-0" title="Tersedia" />;

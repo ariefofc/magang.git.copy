@@ -1,17 +1,11 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import api from '../services/api'
 import { cfg, brandParts } from '../config'
 import LiveChat from '../components/LiveChat'
 
 const fmt = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 })
 
-const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
-const SCHEMES = [
-  { label: 'DP 50%', value: 'dp_50' },
-  { label: 'DP 70%', value: 'dp_70' },
-  { label: 'Lunas 100%', value: 'lunas' },
-]
 const STEPS_SEWA = [
   {
     icon: (
@@ -89,141 +83,6 @@ const SERVICES = [
     desc: 'Invoice digital resmi lengkap dengan rincian jadwal sewa dan barcode status.',
   },
 ]
-
-function SewaModal({ kebaya, onClose }) {
-  const navigate = useNavigate()
-  const [step, setStep] = useState(1)
-  const [loading, setLoading] = useState(false)
-  const [form, setForm] = useState({
-    nama: '', no_wa: '', alamat: '', ukuran: 'M',
-    tanggal_sewa: '', tanggal_pengembalian: '',
-    metode_pembayaran: 'qris', skema_pembayaran: 'dp_50',
-  })
-
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
-
-  const tSewa = form.tanggal_sewa ? new Date(form.tanggal_sewa) : null
-  const tKembali = form.tanggal_pengembalian ? new Date(form.tanggal_pengembalian) : null
-  const durasi = (tSewa && tKembali && tKembali >= tSewa)
-    ? Math.max(1, Math.ceil((tKembali - tSewa) / (1000 * 60 * 60 * 24)))
-    : 1
-  const totalHarga = (kebaya.harga || 0) * durasi
-
-  const submit = async () => {
-    setLoading(true)
-    try {
-      const { data } = await api.post('/transaksi', {
-        ...form,
-        nama_user: form.nama,
-        nama_kebaya: kebaya.nama,
-        kebaya_id: kebaya.id || kebaya.slug,
-        total_harga: totalHarga,
-      })
-      navigate(`/payment/${data.id || data.transaksi?.id}`)
-    } catch (err) {
-      alert(err.response?.data?.message || 'Gagal membuat transaksi')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const today = new Date().toISOString().slice(0, 10)
-
-  const inputCls = 'w-full rounded-lg border border-stone-300 bg-white px-4 py-2.5 text-sm text-stone-800 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none transition'
-  const labelCls = 'block text-sm font-medium text-stone-700 mb-1'
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-[#FAF8F5] rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="bg-[#2C1A0E] text-white px-6 py-4 rounded-t-2xl flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-bold">Sewa Kebaya</h3>
-            <p className="text-amber-300 text-sm">{kebaya.nama} — {fmt.format(kebaya.harga)}</p>
-          </div>
-          <button onClick={onClose} className="text-white/70 hover:text-white text-2xl leading-none">&times;</button>
-        </div>
-
-        {/* Step indicator */}
-        <div className="flex items-center justify-center gap-2 py-4 px-6">
-          {[1, 2, 3].map((s) => (
-            <div key={s} className="flex items-center gap-2">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition ${s <= step ? 'bg-amber-400 text-[#2C1A0E]' : 'bg-stone-200 text-stone-400'}`}>{s}</div>
-              {s < 3 && <div className={`w-8 h-0.5 ${s < step ? 'bg-amber-400' : 'bg-stone-200'}`} />}
-            </div>
-          ))}
-        </div>
-
-        <div className="px-6 pb-6 space-y-4">
-          {step === 1 && (
-            <>
-              <div><label className={labelCls}>Nama Lengkap</label><input className={inputCls} value={form.nama} onChange={set('nama')} placeholder="Nama Anda" required /></div>
-              <div><label className={labelCls}>No. WhatsApp</label><input className={inputCls} value={form.no_wa} onChange={set('no_wa')} placeholder="08xxxxxxxxxx" /></div>
-              <div><label className={labelCls}>Alamat</label><textarea className={inputCls} rows={2} value={form.alamat} onChange={set('alamat')} placeholder="Alamat lengkap" /></div>
-              <div><label className={labelCls}>Ukuran</label>
-                <select className={inputCls} value={form.ukuran} onChange={set('ukuran')}>
-                  {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <button onClick={() => setStep(2)} disabled={!form.nama || !form.no_wa} className="w-full py-2.5 rounded-lg bg-amber-400 text-[#2C1A0E] font-bold hover:bg-amber-500 transition disabled:opacity-40">Lanjut</button>
-            </>
-          )}
-
-          {step === 2 && (
-            <>
-              <div><label className={labelCls}>Tanggal Sewa</label><input type="date" min={today} className={inputCls} value={form.tanggal_sewa} onChange={set('tanggal_sewa')} /></div>
-              <div><label className={labelCls}>Tanggal Pengembalian</label><input type="date" min={form.tanggal_sewa || today} className={inputCls} value={form.tanggal_pengembalian} onChange={set('tanggal_pengembalian')} /></div>
-              <div><label className={labelCls}>Metode Pembayaran</label>
-                <select className={inputCls} value={form.metode_pembayaran} onChange={set('metode_pembayaran')}>
-                  <option value="qris">QRIS</option>
-                  <option value="transfer">Transfer Bank</option>
-                  <option value="cod">Bayar di Tempat</option>
-                </select>
-              </div>
-              <div><label className={labelCls}>Skema Pembayaran</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {SCHEMES.map((s) => (
-                    <button key={s.value} type="button" onClick={() => setForm((f) => ({ ...f, skema_pembayaran: s.value }))}
-                      className={`py-2 rounded-lg border text-sm font-medium transition ${form.skema_pembayaran === s.value ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-stone-300 text-stone-500 hover:border-stone-400'}`}>
-                      {s.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex gap-3">
-                <button onClick={() => setStep(1)} className="flex-1 py-2.5 rounded-lg border border-stone-300 text-stone-600 font-medium hover:bg-stone-100 transition">Kembali</button>
-                <button onClick={() => setStep(3)} disabled={!form.tanggal_sewa || !form.tanggal_pengembalian} className="flex-1 py-2.5 rounded-lg bg-amber-400 text-[#2C1A0E] font-bold hover:bg-amber-500 transition disabled:opacity-40">Lanjut</button>
-              </div>
-            </>
-          )}
-
-          {step === 3 && (
-            <>
-              <div className="bg-white rounded-xl p-4 space-y-2 text-sm border border-stone-200">
-                <h4 className="font-bold text-stone-800 mb-2">Ringkasan Pesanan</h4>
-                <div className="flex justify-between"><span className="text-stone-500">Kebaya</span><span className="font-medium">{kebaya.nama}</span></div>
-                <div className="flex justify-between"><span className="text-stone-500">Durasi</span><span className="font-medium">{durasi} hari</span></div>
-                <div className="flex justify-between"><span className="text-stone-500">Total Harga</span><span className="font-bold text-amber-600">{fmt.format(totalHarga)}</span></div>
-                <div className="flex justify-between"><span className="text-stone-500">Nama</span><span className="font-medium">{form.nama}</span></div>
-                <div className="flex justify-between"><span className="text-stone-500">WhatsApp</span><span className="font-medium">{form.no_wa}</span></div>
-                <div className="flex justify-between"><span className="text-stone-500">Ukuran</span><span className="font-medium">{form.ukuran}</span></div>
-                <div className="flex justify-between"><span className="text-stone-500">Tanggal Sewa</span><span className="font-medium">{form.tanggal_sewa}</span></div>
-                <div className="flex justify-between"><span className="text-stone-500">Pengembalian</span><span className="font-medium">{form.tanggal_pengembalian}</span></div>
-                <div className="flex justify-between"><span className="text-stone-500">Pembayaran</span><span className="font-medium">{SCHEMES.find((s) => s.value === form.skema_pembayaran)?.label}</span></div>
-              </div>
-              <div className="flex gap-3">
-                <button onClick={() => setStep(2)} className="flex-1 py-2.5 rounded-lg border border-stone-300 text-stone-600 font-medium hover:bg-stone-100 transition">Kembali</button>
-                <button onClick={submit} disabled={loading} className="flex-1 py-2.5 rounded-lg bg-amber-400 text-[#2C1A0E] font-bold hover:bg-amber-500 transition disabled:opacity-60">
-                  {loading ? 'Memproses...' : 'Konfirmasi & Bayar'}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function KebayaCard({ k }) {
   const [showBack, setShowBack] = useState(false);
@@ -351,7 +210,6 @@ function KebayaCard({ k }) {
 
 export default function Welcome() {
   const [kebayas, setKebayas] = useState([])
-  const [selected, setSelected] = useState(null) // ponytail: kept for SewaModal if re-enabled
   const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
@@ -520,9 +378,6 @@ export default function Welcome() {
           &copy; {new Date().getFullYear()} {cfg.APP_NAME} Kebaya Rental. All rights reserved.
         </div>
       </footer>
-
-      {/* ── Modal ── */}
-      {selected && <SewaModal kebaya={selected} onClose={() => setSelected(null)} />}
 
       {/* ── Live Chat ── */}
       <LiveChat />

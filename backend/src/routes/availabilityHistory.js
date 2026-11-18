@@ -8,7 +8,7 @@ const { auth, checkRole } = require('../middleware/auth');
 // ═══════════════════════════════════════════════════════
 
 // GET /api/availability-history
-router.get('/', auth, checkRole('admin', 'super_admin'), async (req, res) => {
+router.get('/', auth, checkRole('admin', 'super_admin'), async (_req, res) => {
   try {
     const histories = await prisma.kebayaAvailabilityHistory.findMany({
       include: {

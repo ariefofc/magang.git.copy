@@ -37,7 +37,7 @@ function getStockMap(kebaya) {
         if (parsed[sz] !== undefined) map[sz] = Number(parsed[sz]) || 0;
       });
       return map;
-    } catch (e) {}
+    } catch {}
   }
   // Default distribution if none set yet: distribute kebaya.stok across sizes
   const total = kebaya.stok || 1;

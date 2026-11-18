@@ -3,7 +3,7 @@ const router = express.Router();
 const prisma = require('../prisma');
 const { auth, checkRole } = require('../middleware/auth');
 const midtransClient = require('midtrans-client');
-const { generateQrisDynamic, toBase64Png, crc16Hex } = require('../helpers/qris');
+const { generateQrisDynamic, toBase64Png } = require('../helpers/qris');
 
 // ═══════════════════════════════════════════════════════
 //  HELPERS

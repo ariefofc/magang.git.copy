@@ -8,7 +8,7 @@ const { auth, checkRole } = require('../middleware/auth');
 router.use(auth, checkRole('super_admin'));
 
 // GET /api/admin/users
-router.get('/', async (req, res) => {
+router.get('/', async (_req, res) => {
   try {
     const users = await prisma.user.findMany({
       select: { id: true, name: true, email: true, role: true, createdAt: true },

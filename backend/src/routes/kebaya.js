@@ -10,8 +10,8 @@ const imgDir = path.join(__dirname, '..', '..', 'public', 'images');
 if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, imgDir),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
+  destination: (_req, file, cb) => cb(null, imgDir),
+  filename: (_req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
 });
 const upload = multer({ storage });
 
@@ -94,7 +94,7 @@ const toAdmin = (k) => ({
 });
 
 // GET /api/kebaya — Public catalog
-router.get('/', async (req, res) => {
+router.get('/', async (_req, res) => {
   try {
     const list = await svc.getPublic();
     res.json({ kebaya: list.map(toPublic) });
@@ -104,7 +104,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/kebaya/all — Admin: all kebaya
-router.get('/all', auth, checkRole('admin', 'super_admin'), async (req, res) => {
+router.get('/all', auth, checkRole('admin', 'super_admin'), async (_req, res) => {
   try {
     const list = await svc.getAll();
     res.json({ kebaya: list.map(toAdmin) });
